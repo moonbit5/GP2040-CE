@@ -10,6 +10,8 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
     _options.inverted = options.inverted;
     _options.font = options.font;
 
+    frameBuffer = new uint8_t[(_metrics->width * _metrics->height) / 8];
+
     _options.i2c->readRegister(_options.address, 0x00, &this->screenType, 1);
     this->screenType &= 0x0F;
 
@@ -17,6 +19,7 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
         this->screenType = SCREEN_132x64;
     } else if (_options.size == GPGFX_DisplaySize::SIZE_128x128) {
         this->screenType = SCREEN_128x128_SH1107;
+        _options.orientation = 1; // default to 90-degree software rotation
     }
 
 	uint8_t commands[] = {
@@ -35,7 +38,7 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
 		(!_options.inverted ? CommandOps::NORMAL_DISPLAY : CommandOps::INVERT_DISPLAY),
 
 		CommandOps::SET_MULTIPLEX,
-		(this->screenType == SCREEN_128x128_SH1107) ? 127 : 63,
+		(_metrics->height - 1),
 
 		CommandOps::SET_DISPLAY_OFFSET,
 		0x00,
@@ -47,7 +50,7 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
 		0x22,
 
 		CommandOps::SET_COM_PINS,
-		0x12,
+		(this->screenType == SCREEN_128x128_SH1107) ? 0x22 : 0x12,
 
 		CommandOps::SET_VCOM_DETECT,
 		0x40,
@@ -113,20 +116,26 @@ void GPGFX_TinySSD1306::setPower(bool isPowered) {
 }
 
 void GPGFX_TinySSD1306::clear() {
-	memset(frameBuffer, 0, MAX_SCREEN_SIZE);
+	memset(frameBuffer, 0, (_metrics->width * _metrics->height) / 8);
 }
 
 uint32_t GPGFX_TinySSD1306::getPixel(uint8_t x, uint8_t y) {
 	uint16_t row, bitIndex;
     uint32_t result = 0;
 
-	if ((x<MAX_SCREEN_WIDTH) and (y<MAX_SCREEN_HEIGHT))
+    if (this->screenType == SCREEN_128x128_SH1107 && _options.orientation == 1) {
+        uint8_t temp = x;
+        x = (_metrics->width - 1) - y;
+        y = temp;
+    }
+
+	if ((x < _metrics->width) and (y < _metrics->height))
 	{
         if (this->screenType == ScreenAlternatives::SCREEN_132x64) {
             x+=2;
         }
 
-		row=((y/8)*MAX_SCREEN_WIDTH)+x;
+		row=((y/8)*_metrics->width)+x;
 		bitIndex=y % 8;
 
         result = (frameBuffer[row] >> bitIndex) && 0x01;
@@ -138,19 +147,25 @@ uint32_t GPGFX_TinySSD1306::getPixel(uint8_t x, uint8_t y) {
 void GPGFX_TinySSD1306::drawPixel(uint8_t x, uint8_t y, uint32_t color) {
 	uint16_t row, bitIndex;
 
-	if ((x<MAX_SCREEN_WIDTH) and (y<MAX_SCREEN_HEIGHT))
+    if (this->screenType == SCREEN_128x128_SH1107 && _options.orientation == 1) {
+        uint8_t temp = x;
+        x = (_metrics->width - 1) - y;
+        y = temp;
+    }
+
+	if ((x < _metrics->width) and (y < _metrics->height))
 	{
         if (this->screenType == ScreenAlternatives::SCREEN_132x64) {
             x+=2;
         }
 
-        if (x>=MAX_SCREEN_WIDTH) return;
+        if (x >= _metrics->width) return;
 
-		row=((y/8)*MAX_SCREEN_WIDTH)+x;
+		row=((y/8)*_metrics->width)+x;
 		bitIndex=y % 8;
 
         if (color == 1) {
-		    frameBuffer[row] |= (color<<bitIndex);
+		    frameBuffer[row] |= (1<<bitIndex);
         } else if (color == 0) {
             frameBuffer[row] &= ~(1<<bitIndex);
         } else {
@@ -168,7 +183,7 @@ void GPGFX_TinySSD1306::drawText(uint8_t x, uint8_t y, std::string text, uint8_t
 	uint8_t charOffset = 0;
 	const uint8_t* currGlyph;
 
-    uint8_t maxTextSize = (MAX_SCREEN_WIDTH / _options.font.width);
+    uint8_t maxTextSize = (_metrics->width / _options.font.width);
 
 	for (uint8_t charIndex = 0; charIndex < MIN(text.size(), maxTextSize); charIndex++) {
 		currChar = text[charIndex];
@@ -543,58 +558,38 @@ void GPGFX_TinySSD1306::drawSprite(uint8_t* image, uint16_t width, uint16_t heig
 }
 
 void GPGFX_TinySSD1306::drawBuffer(uint8_t* pBuffer) {
-	uint16_t bufferSize = MAX_SCREEN_SIZE;
-	uint8_t buffer[bufferSize+1] = {SET_START_LINE};
+    uint16_t bufferSize = (_metrics->width * _metrics->height) / 8;
+    uint8_t* data = (pBuffer == nullptr) ? frameBuffer : pBuffer;
 
-	int result = -1;
-	
-    if (this->screenType == ScreenAlternatives::SCREEN_132x64) {
-        uint8_t x = 2; // set column address to 2
-        for (uint8_t y = 0; y < (this->_metrics->height / 8); y++) {
+    uint16_t chunkSize = _metrics->width;
+    uint8_t chunkBuffer[chunkSize + 1];
+    chunkBuffer[0] = 0x40; // Data command
+
+    if (this->screenType == ScreenAlternatives::SCREEN_132x64 || this->screenType == ScreenAlternatives::SCREEN_128x128_SH1107) {
+        uint8_t x = (this->screenType == ScreenAlternatives::SCREEN_132x64) ? 2 : 0;
+        for (uint8_t y = 0; y < (_metrics->height / 8); y++) {
             sendCommand(0xB0 + y);
             sendCommand(x & 0x0F);
             sendCommand(0x10 | (x >> 4));
         
-            if (pBuffer == NULL) {
-                memcpy(&buffer[1],&frameBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
-            } else {
-                memcpy(&buffer[1],&pBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
-            }
-        
-            result = _options.i2c->write(_options.address, buffer, MAX_SCREEN_WIDTH+1, false);
+            memcpy(&chunkBuffer[1], &data[y * chunkSize], chunkSize);
+            _options.i2c->write(_options.address, chunkBuffer, chunkSize + 1, false);
         }
-    } else if (this->screenType == ScreenAlternatives::SCREEN_128x128_SH1107) {
-        uint8_t x = 0;
-        for (uint8_t y = 0; y < 16; y++) {
-            sendCommand(0xB0 + y);
-            sendCommand(x & 0x0F);
-            sendCommand(0x10 | (x >> 4));
-
-            if (pBuffer == NULL) {
-                memcpy(&buffer[1],&frameBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
-            } else {
-                memcpy(&buffer[1],&pBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
-            }
-
-            result = _options.i2c->write(_options.address, buffer, MAX_SCREEN_WIDTH+1, false);
-        }
-    } else {
+    } else { // SSD1306
         sendCommand(CommandOps::PAGE_ADDRESS);
         sendCommand(0x00);
-        sendCommand(0x07);
+        sendCommand((_metrics->height/8) - 1);
         sendCommand(CommandOps::COLUMN_ADDRESS);
         sendCommand(0x00);
-        sendCommand(0x7F);
+        sendCommand(_metrics->width - 1);
 
-        if (pBuffer == NULL) {
-            memcpy(&buffer[1],frameBuffer,bufferSize);
-        } else {
-            memcpy(&buffer[1],pBuffer,bufferSize);
+        for (uint16_t i = 0; i < bufferSize; i += chunkSize) {
+            memcpy(&chunkBuffer[1], &data[i], chunkSize);
+            _options.i2c->write(_options.address, chunkBuffer, chunkSize + 1, false);
         }
-        result = _options.i2c->write(_options.address, buffer, sizeof(buffer), false);
     }
 
-	if (framePage < MAX_SCREEN_HEIGHT/8) {
+	if (framePage < _metrics->height/8) {
 		framePage++;
 	} else {
 		framePage = 0;
