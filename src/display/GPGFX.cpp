@@ -13,6 +13,7 @@ std::map<GPGFX_DisplayType, std::map<GPGFX_DisplaySize, GPGFX_DisplayMetrics>> G
         {
             {SIZE_128x32,{128,32,1}},
             {SIZE_128x64,{128,64,1}},
+            {SIZE_128x128,{128,128,1}},
         },
     },
 };

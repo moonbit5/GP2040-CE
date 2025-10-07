@@ -15,6 +15,8 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
 
     if (isSH1106(this->screenType)) {
         this->screenType = SCREEN_132x64;
+    } else if (_options.size == GPGFX_DisplaySize::SIZE_128x128) {
+        this->screenType = SCREEN_128x128_SH1107;
     }
 
 	uint8_t commands[] = {
@@ -33,7 +35,7 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
 		(!_options.inverted ? CommandOps::NORMAL_DISPLAY : CommandOps::INVERT_DISPLAY),
 
 		CommandOps::SET_MULTIPLEX,
-		63,
+		(this->screenType == SCREEN_128x128_SH1107) ? 127 : 63,
 
 		CommandOps::SET_DISPLAY_OFFSET,
 		0x00,
@@ -547,9 +549,8 @@ void GPGFX_TinySSD1306::drawBuffer(uint8_t* pBuffer) {
 	int result = -1;
 	
     if (this->screenType == ScreenAlternatives::SCREEN_132x64) {
-        uint16_t x = 0;
-        uint16_t y = 0;
-        for (y = 0; y < (MAX_SCREEN_HEIGHT/8); y++) {
+        uint8_t x = 2; // set column address to 2
+        for (uint8_t y = 0; y < (this->_metrics->height / 8); y++) {
             sendCommand(0xB0 + y);
             sendCommand(x & 0x0F);
             sendCommand(0x10 | (x >> 4));
@@ -560,7 +561,22 @@ void GPGFX_TinySSD1306::drawBuffer(uint8_t* pBuffer) {
                 memcpy(&buffer[1],&pBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
             }
         
-            result = _options.i2c->write(_options.address, buffer, MAX_SCREEN_WIDTH+3, false);
+            result = _options.i2c->write(_options.address, buffer, MAX_SCREEN_WIDTH+1, false);
+        }
+    } else if (this->screenType == ScreenAlternatives::SCREEN_128x128_SH1107) {
+        uint8_t x = 0;
+        for (uint8_t y = 0; y < 16; y++) {
+            sendCommand(0xB0 + y);
+            sendCommand(x & 0x0F);
+            sendCommand(0x10 | (x >> 4));
+
+            if (pBuffer == NULL) {
+                memcpy(&buffer[1],&frameBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
+            } else {
+                memcpy(&buffer[1],&pBuffer[y*MAX_SCREEN_WIDTH],MAX_SCREEN_WIDTH);
+            }
+
+            result = _options.i2c->write(_options.address, buffer, MAX_SCREEN_WIDTH+1, false);
         }
     } else {
         sendCommand(CommandOps::PAGE_ADDRESS);
