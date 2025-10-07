@@ -19,7 +19,6 @@ void GPGFX_TinySSD1306::init(GPGFX_DisplayTypeOptions options) {
         this->screenType = SCREEN_132x64;
     } else if (_options.size == GPGFX_DisplaySize::SIZE_128x128) {
         this->screenType = SCREEN_128x128_SH1107;
-        _options.orientation = 1; // default to 90-degree software rotation
     }
 
 	uint8_t commands[] = {
@@ -123,12 +122,6 @@ uint32_t GPGFX_TinySSD1306::getPixel(uint8_t x, uint8_t y) {
 	uint16_t row, bitIndex;
     uint32_t result = 0;
 
-    if (this->screenType == SCREEN_128x128_SH1107 && _options.orientation == 1) {
-        uint8_t temp = x;
-        x = (_metrics->width - 1) - y;
-        y = temp;
-    }
-
 	if ((x < _metrics->width) and (y < _metrics->height))
 	{
         if (this->screenType == ScreenAlternatives::SCREEN_132x64) {
@@ -146,12 +139,6 @@ uint32_t GPGFX_TinySSD1306::getPixel(uint8_t x, uint8_t y) {
 
 void GPGFX_TinySSD1306::drawPixel(uint8_t x, uint8_t y, uint32_t color) {
 	uint16_t row, bitIndex;
-
-    if (this->screenType == SCREEN_128x128_SH1107 && _options.orientation == 1) {
-        uint8_t temp = x;
-        x = (_metrics->width - 1) - y;
-        y = temp;
-    }
 
 	if ((x < _metrics->width) and (y < _metrics->height))
 	{
